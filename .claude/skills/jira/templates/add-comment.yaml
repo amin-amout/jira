@@ -1,8 +1,0 @@
-# POST /rest/api/{2|3}/issue/{issueKey}/comment
-# Required: issue (set via --set issue=KEY), body
-# issue: PROJ-123   # pass at run time: --set issue=PROJ-123
-body: |
-  {{git_context}}
-
-# --- optional ---
-# visibility_role: Administrators   # restrict comment to a project role

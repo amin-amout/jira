@@ -1,36 +1,40 @@
 # Jira skill
 
-A minimal Jira integration for Claude (Claude Code / Desktop), GitHub Copilot (VS Code) and OpenAI Codex (CLI). It can create tickets, update a ticket's description or other fields, and add comments. Python 3 standard library only, no dependencies.
+A config-driven Jira integration for Claude (Claude Code / Desktop), GitHub Copilot (VS Code) and OpenAI Codex (CLI). Python 3 standard library only.
+
+The engine (`jira.py`) knows no Jira operation by name. Operations, payload templates, field mappings, defaults and per-project overrides are all data in one file, `jira-agent.config.yml`. Add or change an operation by editing YAML.
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
-| `.claude/skills/jira/SKILL.md` | Skill definition (auto-discovered by Claude); full reference |
-| `.claude/skills/jira/jira.py` | The script that calls the Jira REST API |
-| `.claude/skills/jira/templates/*.yaml` | One YAML payload template per operation |
-| `AGENTS.md` | Codex entry point (points to the skill) |
-| `.github/copilot-instructions.md` | Copilot entry point (points to the skill) |
+| `.claude/skills/jira/SKILL.md` | Skill definition and full reference (auto-discovered by Claude) |
+| `.claude/skills/jira/jira-agent.config.yml` | Operation registry, templates, defaults, per-project overrides |
+| `.claude/skills/jira/jira.py` | Generic engine |
+| `AGENTS.md`, `.github/copilot-instructions.md` | Codex / Copilot entry points (point to the skill) |
+
+Copy `jira-agent.config.yml` to your repo root to customise it per repository; it takes precedence over the bundled one.
 
 ## Setup
 
 ```bash
-export JIRA_BASE_URL="https://jira.example.com"   # no trailing slash
-export JIRA_PAT="<personal access token>"          # JIRA_TOKEN also works
+export JIRA_BASE_URL="https://jira.example.com"
+export JIRA_PAT="<personal access token>"     # JIRA_TOKEN also works
+export JIRA_PROJECT_KEY="PROJ"                # optional default project
 ```
 
-- **Server / Data Center:** Bearer PAT, API v2 (default).
-- **Cloud:** also set `JIRA_EMAIL` (Basic auth). Set `JIRA_API_VERSION=3` to use `/rest/api/3`; the default is `2`.
+Server/Data Center uses a Bearer PAT with API v2. Cloud: also set `JIRA_EMAIL` (Basic auth) and optionally `JIRA_API_VERSION=3`.
 
 ## Usage
 
 ```bash
-python3 .claude/skills/jira/jira.py create             --set project=PROJ
-python3 .claude/skills/jira/jira.py update-description --set issue=PROJ-1
-python3 .claude/skills/jira/jira.py add-comment        --set issue=PROJ-1 --set body="Done"
-python3 .claude/skills/jira/jira.py update             --set issue=PROJ-1 --set priority=High
+python3 .claude/skills/jira/jira.py ops                       # list operations
+python3 .claude/skills/jira/jira.py ops create                # required / optional values
+python3 .claude/skills/jira/jira.py create                    # title + description from the latest commit
+python3 .claude/skills/jira/jira.py add-comment issue=PROJ-1 body="Fixed"
+python3 .claude/skills/jira/jira.py update issue=PROJ-1 priority=High labels=a,b duration=2h
+python3 .claude/skills/jira/jira.py transition issue=PROJ-1 transition_id=31
+python3 .claude/skills/jira/jira.py create --dry-run          # print the request, send nothing
 ```
 
-Add `--dry-run` to print the request without sending it (no credentials needed). Title and description are auto-filled from the latest Git commit; without a Git repo they fall back to "Manual ticket – no commit hash available".
-
-Or just ask your agent: "create a Jira ticket for this change". See [`SKILL.md`](.claude/skills/jira/SKILL.md) for placeholders, templates and payloads.
+Or ask your agent: "create a Jira ticket for this change". See [SKILL.md](.claude/skills/jira/SKILL.md) for the config reference.

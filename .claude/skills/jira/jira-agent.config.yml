@@ -1,0 +1,171 @@
+# jira-agent.config.yml - everything the Jira agent knows lives here.
+#
+# Lookup order: --config FILE, $JIRA_AGENT_CONFIG, ./jira-agent.config.yml, then next to jira.py.
+# ${VAR} / ${VAR:-fallback} are replaced from the environment when the file is loaded.
+# {{ name | filter }} placeholders are filled when an operation runs. Values come from, in order:
+#   key=value on the command line  >  operation defaults  >  global defaults  >  git/built-ins
+# Any entry whose value ends up empty is left out of the request, so every optional field is
+# simply a placeholder that nobody filled in.
+
+connection:
+  base_url: ${JIRA_BASE_URL}                  # Cloud: https://your-domain.atlassian.net
+  token_env: [JIRA_PAT, JIRA_TOKEN]           # first one that is set wins
+  user: ${JIRA_EMAIL}                         # empty = "Authorization: Bearer <PAT>" (Server/Data Center)
+                                              # set   = Basic email:token (Jira Cloud API token)
+  api_version: ${JIRA_API_VERSION:-2}         # 2 = Server/DC and Cloud (plain text). 3 = Cloud only (ADF text)
+  api_prefix: "/rest/api/{{ api_version }}"
+  timeout: 30
+
+# Global defaults. Also the variables you can pass as key=value.
+defaults:
+  project: ${JIRA_PROJECT_KEY}
+  issuetype: Task
+  user_key: ${JIRA_USER_KEY:-name}            # people are identified by "name" (Server/DC) or "accountId" (Cloud)
+  # priority: Medium
+  # labels: [from-agent]
+
+# Text built from the current Git commit (built-ins: commit_hash, commit_short, commit_subject,
+# branch, repo, author, git_context).
+git:
+  context: |
+    Commit: {{ commit_hash }}
+    Branch: {{ branch }}
+    Subject: {{ commit_subject }}
+  fallback_context: "Manual ticket – no commit hash available"
+  fallback_title: "Manual ticket"
+
+# Reusable payload fragments. `extends` deep-merges; a null value deletes an inherited key.
+templates:
+  fields:                                     # fields that can be edited on an existing issue
+    fields:
+      summary: "{{ title }}"
+      description: "{{ description | rich }}"
+      priority: {name: "{{ priority }}"}
+      assignee: {"{{ user_key }}": "{{ assignee }}"}
+      labels: "{{ labels | list }}"
+      components: [{name: "{{ component }}"}]
+      duedate: "{{ due_date }}"
+      timetracking: {originalEstimate: "{{ duration }}", remainingEstimate: "{{ remaining }}"}
+  new-issue:                                  # fields only valid when creating
+    extends: fields
+    fields:
+      project: {key: "{{ project }}"}
+      issuetype: {name: "{{ issuetype }}"}
+      parent: {key: "{{ parent }}"}           # sub-tasks
+
+# The operation registry. Each entry: method, path (appended to api_prefix), required, payload,
+# optional result message. Add an operation by adding an entry - no code changes.
+operations:
+  create:
+    about: Create an issue. Title and description default to the latest Git commit.
+    method: POST
+    path: /issue
+    required: [project, issuetype, title]
+    defaults:
+      title: "{{ commit_subject }}"
+      description: "{{ git_context }}"
+    payload: {extends: new-issue}
+    result: "Created {{ response.key }}: {{ base_url }}/browse/{{ response.key }}"
+
+  create-bug:                                 # an operation can extend another one
+    extends: create
+    about: Create a Bug (same as create, issuetype Bug).
+    defaults: {issuetype: Bug}
+
+  get:
+    about: Show an issue (summary, status, assignee, priority, labels, description).
+    method: GET
+    path: "/issue/{{ issue }}?fields=summary,status,assignee,priority,labels,description"
+
+  update:
+    about: Edit fields of an issue. Only the fields you pass are changed.
+    method: PUT
+    path: "/issue/{{ issue }}"
+    required: [issue]
+    require_any: [title, description, priority, assignee, labels, component, due_date, duration, remaining]
+    payload: {extends: fields}
+    result: "Updated {{ issue }}"
+
+  update-description:
+    about: Replace the description of an issue (default text is the Git context).
+    method: PUT
+    path: "/issue/{{ issue }}"
+    required: [issue, description]
+    defaults:
+      description: "{{ git_context }}"
+    payload:
+      fields: {description: "{{ description | rich }}"}
+    result: "Updated description of {{ issue }}"
+
+  add-comment:
+    about: Add a comment to an issue (default text is the Git context).
+    method: POST
+    path: "/issue/{{ issue }}/comment"
+    required: [issue, body]
+    defaults:
+      body: "{{ git_context }}"
+    payload:
+      body: "{{ body | rich }}"
+      visibility: {type: "{{ visibility_role | then:role }}", value: "{{ visibility_role }}"}
+    result: "Added comment {{ response.id }} to {{ issue }}"
+
+  assign:
+    about: Assign an issue to a user (name on Server/DC, accountId on Cloud).
+    method: PUT
+    path: "/issue/{{ issue }}/assignee"
+    required: [issue, assignee]
+    payload: {"{{ user_key }}": "{{ assignee }}"}
+    result: "Assigned {{ issue }} to {{ assignee }}"
+
+  list-transitions:
+    about: List the workflow transitions currently available for an issue (id and name).
+    method: GET
+    path: "/issue/{{ issue }}/transitions"
+
+  transition:
+    about: Move an issue through its workflow. Get transition_id from list-transitions.
+    method: POST
+    path: "/issue/{{ issue }}/transitions"
+    required: [issue, transition_id]
+    payload:
+      transition: {id: "{{ transition_id }}"}
+      fields:
+        resolution: {name: "{{ resolution }}"}
+      update:
+        comment: [{add: {body: "{{ comment | rich }}"}}]
+    result: "Transitioned {{ issue }} with transition {{ transition_id }}"
+
+  log-work:
+    about: Log time spent on an issue, e.g. duration="1h 30m".
+    method: POST
+    path: "/issue/{{ issue }}/worklog"
+    required: [issue, duration]
+    payload:
+      timeSpent: "{{ duration }}"
+      comment: "{{ comment | rich }}"
+    result: "Logged {{ duration }} on {{ issue }}"
+
+  attach-file:
+    about: Upload a local file as an attachment, e.g. file=./build.log.
+    method: POST
+    path: "/issue/{{ issue }}/attachments"
+    required: [issue, file]
+    headers: {X-Atlassian-Token: no-check}
+    attach: "{{ file }}"
+    result: "Attached {{ response.0.filename }} to {{ issue }}"
+
+# Per-project overrides, keyed by project key. Selected by project=KEY or defaults.project, and
+# deep-merged over everything above (so they can change defaults, templates, operations, connection).
+# Custom field ids differ per Jira instance: look yours up with GET /rest/api/2/field.
+projects:
+  EXAMPLE:                                    # rename to your project key
+    defaults:
+      issuetype: Story
+      labels: [team-example]
+    templates:
+      fields:
+        fields:
+          customfield_10016: "{{ story_points | number }}"   # example: "Story Points" field
+    operations:
+      create:
+        required: [project, issuetype, title, story_points]
