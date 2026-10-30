@@ -1,0 +1,5 @@
+# PUT /rest/api/{2|3}/issue/{issueKey}   (body: {"fields": {"description": ...}})
+# Required: issue (set via --set issue=KEY), description
+# issue: PROJ-123   # pass at run time: --set issue=PROJ-123
+description: |
+  {{git_context}}

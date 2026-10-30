@@ -1,0 +1,11 @@
+# PUT /rest/api/{2|3}/issue/{issueKey}
+# Required: issue (set via --set issue=KEY). Include only the fields you want to change.
+# issue: PROJ-123   # pass at run time: --set issue=PROJ-123
+# summary: "New title"
+# description: "New description"
+# priority: High
+# assignee: jdoe              # Server/DC: username. Cloud (JIRA_EMAIL set): accountId
+# labels: [backend]           # replaces all existing labels
+# components: [API]           # replaces all existing components
+# duedate: 2026-12-31
+# duration: 2h                # original estimate
